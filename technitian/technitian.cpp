@@ -11,15 +11,37 @@ constexpr int FAIL_CODE = 1;
 constexpr int HOUR_MILLISECONDS = 60 * 60 * 1000;
 // minutes * seconds * milliseconds
 
-/*
-Release and close passed mutex. 
 
-@param hMutex - the handle of the mutex to free. 
-*/
-void freeMutex(HANDLE hMutex) {
-	ReleaseMutex(hMutex);
-	CloseHandle(hMutex);
-}
+// Wrapper for mutex with constructor and destructor.
+class MyMutexA {
+public:
+	HANDLE hMutex;
+
+	// Constructor
+	MyMutexA(LPSECURITY_ATTRIBUTES lpMutexAttributes, BOOL bInitialOwner, LPCSTR lpName) : hMutex(CreateMutexA(lpMutexAttributes, bInitialOwner, lpName)) {}
+
+	// Destructor
+	~MyMutexA() {
+		ReleaseMutex(this->hMutex);
+		CloseHandle(this->hMutex);
+	}
+};
+
+// Wrapper for registery key with constructor and destructor.
+class MyRegisteryKey {
+public:
+	HKEY hRegisteryKey;
+
+	// Constructor
+	MyRegisteryKey(HKEY hKey, LPCWSTR lbSubKey, DWORD ulOptions, REGSAM samDesired) : hRegisteryKey(NULL) {
+		RegOpenKeyExW(HKEY_CURRENT_USER, (LPCWSTR)STARTUP_REGISTERY, 0, KEY_SET_VALUE, &this->hRegisteryKey);
+	}
+	
+	// Deconstructor
+	~MyRegisteryKey() {
+		RegCloseKey(this->hRegisteryKey);
+	}
+};
 
 /*
 Adds a file to the startup registery given the file's path.
@@ -29,30 +51,23 @@ Adds a file to the startup registery given the file's path.
 @return SUCCESS_CODE if added successfuly.
 */
 int addToStartupRegistery(WCHAR* path) {
-	HKEY hRegisteryKey;
-	int exitValue = RegOpenKeyExW(HKEY_CURRENT_USER, (LPCWSTR)STARTUP_REGISTERY, 0, KEY_SET_VALUE, &hRegisteryKey);
-
-	if (exitValue != ERROR_SUCCESS) {
-		return FAIL_CODE;
-	}
+	MyRegisteryKey startupKeyRegistery(HKEY_CURRENT_USER, (LPCWSTR)STARTUP_REGISTERY, 0, KEY_SET_VALUE);
 
 	size_t pathLength = (_tcslen(path) + 1) * sizeof(WCHAR);
-	exitValue = RegSetValueExW(hRegisteryKey, (LPCWSTR)MANAGER_TITLE, 0, REG_SZ, (BYTE*)path, pathLength);
+	int exitValue = RegSetValueExW(startupKeyRegistery.hRegisteryKey, (LPCWSTR)MANAGER_TITLE, 0, REG_SZ, (BYTE*)path, pathLength);
 	
 	if (exitValue != ERROR_SUCCESS) {
 		return FAIL_CODE;
 	}
-	
-	RegCloseKey(hRegisteryKey);
 
 	return SUCCESS_CODE;
 }
 
 int main() {
 	// Create Mutex (or return immidietly if Mutex already locked)
-	HANDLE hInitMutex = CreateMutexA(NULL, true, INITIAL_MUTEX_NAME);
+	MyMutexA initialMutex(NULL, true, INITIAL_MUTEX_NAME);
 
-	if (hInitMutex == NULL) {
+	if (initialMutex.hMutex == NULL) {
 		return FAIL_CODE;
 	} else if (GetLastError() == ERROR_ALREADY_EXISTS) {
 		return SUCCESS_CODE;
@@ -63,7 +78,6 @@ int main() {
 	int exitValue = GetModuleFileNameW(NULL, currentExePath, MAX_PATH);
 
 	if (exitValue == 0) {
-		freeMutex(hInitMutex);
 		return exitValue;
 	}
 
@@ -71,7 +85,6 @@ int main() {
 	exitValue = addToStartupRegistery(currentExePath);
 
 	if (exitValue != SUCCESS_CODE) {
-		freeMutex(hInitMutex);
 		return exitValue;
 	}
 
@@ -79,15 +92,11 @@ int main() {
 	exitValue = MessageBoxA(NULL, INIT_MESSAGE, MANAGER_TITLE, MB_OK);
 
 	if (exitValue != IDOK) {
-		freeMutex(hInitMutex);
 		return FAIL_CODE;
 	}
 
 	// Sleep 1 hour
 	Sleep(HOUR_MILLISECONDS);
-
-	// Free mutex
-	freeMutex(hInitMutex);
 
 	return SUCCESS_CODE;
 }
